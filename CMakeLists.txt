@@ -63,8 +63,8 @@ target_include_directories(pico-mcp2515 PUBLIC include/)
 pico_set_program_name(pico-mcp2515 "pico-mcp2515")
 pico_set_program_version(pico-mcp2515 "0.1")
 
-pico_enable_stdio_uart(pico-mcp2515 1)
-pico_enable_stdio_usb(pico-mcp2515 0)
+pico_enable_stdio_uart(pico-mcp2515 0)
+pico_enable_stdio_usb(pico-mcp2515 1)
 
 # Add any user requested libraries
 target_link_libraries(pico-mcp2515

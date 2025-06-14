@@ -214,7 +214,8 @@ void host_packet_analyze(uint8_t data)
         for(int i = 0; i < 20; i++) {
             canMsg1.data[i] = 0; 
         }
-        hex_string_to_bytes_opt((const char *)hostDataArray, canMsg1.data, 20);
+        hex_string_to_bytes_opt((const char *)hostDataArray, canMsg1.data, hostDataIndex);
+        canMsg1.can_dlc = hostDataIndex/2;
         can0.sendMessage(&canMsg1);
         hostDataIndex = 0;
     }else{
@@ -311,17 +312,17 @@ int main() {
         #if 1
         gpio_put(LED_PIN, 1);
         if(can0.readMessage(&rx) == MCP2515::ERROR_OK) {
-            printf("New frame from ID: %10x  %10x \n", rx.can_id,rx.can_id&CAN_ERR_MASK);
+            //printf("New frame from ID: %10x  %10x   %10x  %10x \n", rx.can_id,rx.can_id&CAN_ERR_MASK,rx.can_id&CAN_EFF_FLAG,rx.can_id&CAN_RTR_FLAG);
             gpio_put(LED_PIN, 0);
             packet_t txPacket;
             txPacket.id = rx.can_id&CAN_ERR_MASK;
-            txPacket.ide = rx.can_id&CAN_EFF_FLAG > 0 ? 1 : 0;
-            txPacket.rtr = rx.can_id&CAN_RTR_FLAG > 0 ? 1 : 0;
+            txPacket.ide = (rx.can_id&CAN_EFF_FLAG) > 0 ? 1 : 0;
+            txPacket.rtr = (rx.can_id&CAN_RTR_FLAG) > 0 ? 1 : 0;
             txPacket.dlc = rx.can_dlc;  
             for (int i = 0; i < rx.can_dlc; i++) {
                     txPacket.dataArray[i] = rx.data[i];
                 }
-            //printPacket(&txPacket);
+            printPacket(&txPacket);
         }
         #endif
         int ch = getchar_timeout_us(0);  // 非阻塞获取输入字符
