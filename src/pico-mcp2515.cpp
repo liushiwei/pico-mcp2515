@@ -14,7 +14,10 @@
 #include <ctype.h>
 
 //#define SEND_CAN_EMBEDDED_DATA
-
+#define AUTO_CHECK_BITRATE
+#define LED_ON_TIME 10000
+int led_on_time_count = LED_ON_TIME;
+u_int8_t checkBitrateSuccess = 0;
 #ifdef SEND_CAN_EMBEDDED_DATA
 // 使用自动生成的符号名
 extern const char _binary_data_txt_start[];
@@ -246,39 +249,74 @@ void printPacket(packet_t * packet) {
   }
   printf(TERMINATOR);
 }
+
+void autoCheckBaudrate() {
+    while (true)
+    {
+        int bitrate = CAN_1000KBPS;
+        u_int8_t message_count = 0;
+        for (int i = CAN_1000KBPS; i > -1; i--) {
+            can0.reset();
+            can0.setBitrate((CAN_SPEED)i, MCP_8MHZ);
+            can0.setListenOnlyMode();
+            printf("Set bitrate : %d\n", i);
+            int j = 100;
+            while(j)
+            {
+                if (can0.readMessage(&rx) == MCP2515::ERROR_OK) {
+                    printf("Auto baudrate found: %d\n", message_count);
+                    message_count++;
+                    if(message_count > 3){
+                        checkBitrateSuccess = true;
+                        return;
+                    }
+
+                }
+                sleep_ms(10);
+                j--;    
+            }
+            
+        }
+    }
+    
+  
+}
 int main() {
     stdio_init_all();
-    #if 0
-     canMsg1.can_id  = 0x0F6;
-  canMsg1.can_dlc = 8;
-  canMsg1.data[0] = 0x8E;
-  canMsg1.data[1] = 0x87;
-  canMsg1.data[2] = 0x32;
-  canMsg1.data[3] = 0xFA;
-  canMsg1.data[4] = 0x26;
-  canMsg1.data[5] = 0x8E;
-  canMsg1.data[6] = 0xBE;
-  canMsg1.data[7] = 0x86;
-  #endif
-  #ifndef PICO_DEFAULT_LED_PIN
-#warning blink example requires a board with a regular LED
-#else
+    #ifdef AUTO_CHECK_BITRATE
+    autoCheckBaudrate() ;
+    #else
+    checkBitrateSuccess = true;
+    can0.reset();
+    can0.setBitrate(CAN_500KBPS, MCP_8MHZ);
+    can0.setNormalMode();
+    #endif
+    #ifndef PICO_DEFAULT_LED_PIN
+    #warning blink example requires a board with a regular LED
+    #else
     const uint LED_PIN = PICO_DEFAULT_LED_PIN;
     gpio_init(LED_PIN);
     gpio_set_dir(LED_PIN, GPIO_OUT);
-    gpio_put(LED_PIN, 1);
+    //gpio_put(LED_PIN, 1);
     //while (true) {
      //   gpio_put(LED_PIN, 1);
      //   sleep_ms(250);
      //   gpio_put(LED_PIN, 0);
      //   sleep_ms(250);
     //}
-#endif
-  //printf("Send New frame from ID: ==========\n");
-    //Initialize interface
-    can0.reset();
-    can0.setBitrate(CAN_500KBPS, MCP_8MHZ);
-    can0.setNormalMode();
+    #endif
+    if(!checkBitrateSuccess){
+        can0.reset();
+        can0.setBitrate(CAN_500KBPS, MCP_8MHZ);
+        can0.setNormalMode();
+        printf("Auto baudrate check failed, set default bitrate : %d\n", CAN_500KBPS);
+    }else{
+        gpio_put(LED_PIN, 1);
+        sleep_ms(3000);
+        can0.setNormalMode();
+        printf("Auto baudrate check success, set default bitrate : %d\n", CAN_500KBPS);
+    }
+    
     #ifdef SEND_CAN_EMBEDDED_DATA
     //Listen loop
     char line_buffer[128];
@@ -309,11 +347,10 @@ int main() {
     }
     #else
     while(true) {
-        #if 1
-        gpio_put(LED_PIN, 1);
+        
         if(can0.readMessage(&rx) == MCP2515::ERROR_OK) {
             //printf("New frame from ID: %10x  %10x   %10x  %10x \n", rx.can_id,rx.can_id&CAN_ERR_MASK,rx.can_id&CAN_EFF_FLAG,rx.can_id&CAN_RTR_FLAG);
-            gpio_put(LED_PIN, 0);
+            
             packet_t txPacket;
             txPacket.id = rx.can_id&CAN_ERR_MASK;
             txPacket.ide = (rx.can_id&CAN_EFF_FLAG) > 0 ? 1 : 0;
@@ -323,12 +360,19 @@ int main() {
                     txPacket.dataArray[i] = rx.data[i];
                 }
             printPacket(&txPacket);
+            led_on_time_count = LED_ON_TIME;
         }
-        #endif
         int ch = getchar_timeout_us(0);  // 非阻塞获取输入字符
-
+        //printf("led_on_time_count %d \n",led_on_time_count);
         if (ch != PICO_ERROR_TIMEOUT) {
             host_packet_analyze(ch);
+        }
+        
+        if(led_on_time_count > 0){
+            gpio_put(LED_PIN, 1);
+            led_on_time_count--;
+        }else{
+            gpio_put(LED_PIN, 0);
         }
         //can0.sendMessage(&canMsg1);
         //delay_ms(100);
