@@ -91,6 +91,25 @@ MCP2515::ERROR MCP2515::reset(void)
             return result;
         }
     }
+    #if 0
+    	mcp2515_set_reg(TXRTSCTRL, 0); //禁用引脚的发送请求功能
+    mcp2515_set_reg(BFPCTRL, 0);	 //禁用引脚的接收中断功能   
+
+ 	mcp2515_set_reg(RXM0SIDH,0x00);//接收屏蔽配置	 
+	mcp2515_set_reg(RXM0SIDL,0x00);//接收所有报文	 
+	mcp2515_set_reg(RXF0SIDH,0x00);//接收过滤配置	
+	mcp2515_set_reg(RXF0SIDL,0x00);//接收所有报文
+	
+ 	mcp2515_set_reg(RXM1SIDH,0x00);//接收屏蔽配置	 
+	mcp2515_set_reg(RXM1SIDL,0x00);//接收所有报文	 	
+	mcp2515_set_reg(RXF1SIDH,0x00);//接收过滤配置	
+	mcp2515_set_reg(RXF1SIDL,0x00);//接收所有报文	
+	
+	mcp2515_set_reg(CANINTE,0x03);//使能INT引脚中断		
+	
+ 	mcp2515_modify_reg(RXB0CTRL,0xF0,0x60);   
+	mcp2515_modify_reg(RXB1CTRL,0xF0,0x60);   
+    #endif
 
     return ERROR_OK;
 }

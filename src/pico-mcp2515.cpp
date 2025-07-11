@@ -12,12 +12,43 @@
 #include <stdint.h>
 #include <string.h>
 #include <ctype.h>
+#include <stdio.h>
+#include <iostream>
+#include <bitset>
+#include "hardware/gpio.h"
 
 //#define SEND_CAN_EMBEDDED_DATA
 #define AUTO_CHECK_BITRATE
 #define LED_ON_TIME 10000
-int led_on_time_count = LED_ON_TIME;
-u_int8_t checkBitrateSuccess = 0;
+int led_on_time_count = LED_ON_TIME; //LED亮的时间计数器
+u_int8_t checkBitrateSuccess = 0;//检测波特率成功标志
+int aoto_bitrate = 0; //自动检测的波特率
+u_int8_t message_count = 0; // 消息计数器
+int can_mode = 0; // 1为正常模式，0为自动检测波特率模式
+
+#define CAN0_INT_PIN 12 // CAN0中断引脚
+
+
+const uint8_t SIDL_EXTENDED_MSGID = 1U << 3U;
+
+const char *SPEED_STR[] = {    
+    "CAN_5KBPS",
+    "CAN_10KBPS",
+    "CAN_20KBPS",
+    "CAN_31K25BPS",
+    "CAN_33KBPS",
+    "CAN_40KBPS",
+    "CAN_50KBPS",
+    "CAN_80KBPS",
+    "CAN_83K3BPS",
+    "CAN_95KBPS",
+    "CAN_100KBPS",
+    "CAN_125KBPS",
+    "CAN_200KBPS",
+    "CAN_250KBPS",
+    "CAN_500KBPS",
+    "CAN_1000KBPS"
+};
 #ifdef SEND_CAN_EMBEDDED_DATA
 // 使用自动生成的符号名
 extern const char _binary_data_txt_start[];
@@ -250,27 +281,49 @@ void printPacket(packet_t * packet) {
   printf(TERMINATOR);
 }
 
+
+void spi_transmit(uint8_t *tx, uint8_t* rx, size_t len) {
+    asm volatile("nop \n nop \n nop");
+    gpio_put(PICO_DEFAULT_SPI_CSN_PIN, 0);
+    asm volatile("nop \n nop \n nop");
+    if(rx) {
+        spi_write_read_blocking(spi_default, tx, rx, len);
+    } else {
+        spi_write_blocking(spi_default, tx, len);
+    }
+    asm volatile("nop \n nop \n nop");
+    gpio_put(PICO_DEFAULT_SPI_CSN_PIN, 1);
+    asm volatile("nop \n nop \n nop");
+}
 void autoCheckBaudrate() {
     while (true)
     {
-        int bitrate = CAN_1000KBPS;
-        u_int8_t message_count = 0;
+        //int bitrate = CAN_1000KBPS;
         for (int i = CAN_1000KBPS; i > -1; i--) {
-            can0.reset();
+            message_count = 0;
+            if(can0.reset() == MCP2515::ERROR_OK){
+                printf("can0.reset OK \n");
+            }
+            sleep_ms(10);
             can0.setBitrate((CAN_SPEED)i, MCP_8MHZ);
-            can0.setListenOnlyMode();
-            printf("Set bitrate : %d\n", i);
-            int j = 100;
+            printf("Set bitrate : %s\n", SPEED_STR[i]);
+            if(can0.setListenOnlyMode() == MCP2515::ERROR_OK){
+                printf("Set listen only mode \n");
+                can_mode = 0 ;
+            }else{
+                printf("Set listen only mode error \n");
+            }
+            //can_mode = 0 ;
+            
+            int j = 200;
             while(j)
             {
-                if (can0.readMessage(&rx) == MCP2515::ERROR_OK) {
+                    
+                if(message_count > 100){
                     printf("Auto baudrate found: %d\n", message_count);
-                    message_count++;
-                    if(message_count > 3){
-                        checkBitrateSuccess = true;
-                        return;
-                    }
-
+                    checkBitrateSuccess = true;
+                    aoto_bitrate = i;
+                    return;
                 }
                 sleep_ms(10);
                 j--;    
@@ -281,16 +334,127 @@ void autoCheckBaudrate() {
     
   
 }
+
+void say_hello(uint gpio, uint32_t event) {
+    #if 0
+    std::cout   << time_us_64()
+                << " IRQ: gpio "
+                << gpio
+                << " event "
+                << std::bitset<32>(event)
+                << std::endl;
+    #endif
+    uint8_t status = can0.getInterrupts();
+    if(status&0x03 && !(status&0x80)){
+
+        status = can0.getStatus();
+        if(status&0x01)
+		{
+			status &= 0xfe;
+			uint8_t tx[14] = {
+            0x90,
+            };
+            uint8_t rx[sizeof(tx)] = {0};
+            spi_transmit(tx, rx, sizeof(tx));
+            //if(can0.checkError()){
+            //    printf("CANINTF_RX0IF  recive Error \n");
+            //}
+            can0.modifyRegister(MCP2515::REGISTER::MCP_CANINTF, MCP2515::CANINTF::CANINTF_RX0IF, 0);
+            packet_t txPacket;
+            txPacket.dlc = rx[5] & 0b1111;
+            if(rx[2] & SIDL_EXTENDED_MSGID) {
+                txPacket.id =  (rx[1] << 21U)
+                    | ((rx[2] >> 5U) << 18U)
+                    | ((rx[2] & 0b11) << 16U)
+                    | (rx[3] << 8U)
+                    | rx[4]
+                    | (1 << 31U); // extended frame, see linux/can.h
+            } else {
+                txPacket.id =  (rx[1] << 3U) | (rx[2] >> 5U);
+            }
+            txPacket.ide = (txPacket.id&CAN_EFF_FLAG) > 0 ? 1 : 0;
+            txPacket.rtr = (txPacket.id&CAN_RTR_FLAG) > 0 ? 1 : 0;
+            memcpy(txPacket.dataArray, &rx[6], txPacket.dlc);
+            message_count++;
+            if(checkBitrateSuccess)
+            printPacket(&txPacket);
+            led_on_time_count = LED_ON_TIME;
+		}
+		else if(status&0x02)
+		{
+			status &= 0xfd;
+			uint8_t tx[14] = {
+            0x94,
+            };
+            uint8_t rx[sizeof(tx)] = {0};
+            spi_transmit(tx, rx, sizeof(tx));
+            //if(can0.checkError()){
+            //    printf("CANINTF_RX1IF recive Error \n");
+            //}
+            can0.modifyRegister(MCP2515::REGISTER::MCP_CANINTF, MCP2515::CANINTF::CANINTF_RX1IF, 0);
+            packet_t txPacket;
+            txPacket.dlc = rx[5] & 0b1111;
+            if(rx[2] & SIDL_EXTENDED_MSGID) {
+                txPacket.id =  (rx[1] << 21U)
+                    | ((rx[2] >> 5U) << 18U)
+                    | ((rx[2] & 0b11) << 16U)
+                    | (rx[3] << 8U)
+                    | rx[4]
+                    | (1 << 31U); // extended frame, see linux/can.h
+            } else {
+                txPacket.id =  (rx[1] << 3U) | (rx[2] >> 5U);
+            }
+            txPacket.ide = (txPacket.id&CAN_EFF_FLAG) > 0 ? 1 : 0;
+            txPacket.rtr = (txPacket.id&CAN_RTR_FLAG) > 0 ? 1 : 0;
+            memcpy(txPacket.dataArray, &rx[6], txPacket.dlc);
+            message_count++;
+            if(checkBitrateSuccess)
+            printPacket(&txPacket);
+            led_on_time_count = LED_ON_TIME;
+		}
+		else;
+        
+        if((message_count > 20) && (can_mode == 0) ){
+            if(can0.setNormalMode()== MCP2515::ERROR_OK){
+                printf("== setNormalMode OK \n");
+                can_mode = 1 ;
+            }else{
+                can0.setNormalMode();
+                printf("== setNormalMode ERROR \n");
+            }
+        }
+        #if 0
+        printf("CAN RX0 Interrupt\n");
+        if(can0.readMessage(&rx) == MCP2515::ERROR_OK) {
+            //printf("New frame from ID: %10x  %10x   %10x  %10x \n", rx.can_id,rx.can_id&CAN_ERR_MASK,rx.can_id&CAN_EFF_FLAG,rx.can_id&CAN_RTR_FLAG);
+            
+            packet_t txPacket;
+            txPacket.id = rx.can_id&CAN_ERR_MASK;
+            txPacket.ide = (rx.can_id&CAN_EFF_FLAG) > 0 ? 1 : 0;
+            txPacket.rtr = (rx.can_id&CAN_RTR_FLAG) > 0 ? 1 : 0;
+            txPacket.dlc = rx.can_dlc;  
+            for (int i = 0; i < rx.can_dlc; i++) {
+                    txPacket.dataArray[i] = rx.data[i];
+                }
+            message_count++;
+            printPacket(&txPacket);
+            led_on_time_count = LED_ON_TIME;
+        }
+        #endif
+        
+
+    }
+    
+	can0.clearInterrupts();
+				
+}
 int main() {
     stdio_init_all();
-    #ifdef AUTO_CHECK_BITRATE
-    autoCheckBaudrate() ;
-    #else
-    checkBitrateSuccess = true;
-    can0.reset();
-    can0.setBitrate(CAN_500KBPS, MCP_8MHZ);
-    can0.setNormalMode();
-    #endif
+    message_count = 0;
+    checkBitrateSuccess = 0;
+    aoto_bitrate = 0;
+    can_mode = 0;
+    memset(&rx, 0, sizeof(rx));
     #ifndef PICO_DEFAULT_LED_PIN
     #warning blink example requires a board with a regular LED
     #else
@@ -305,16 +469,37 @@ int main() {
      //   sleep_ms(250);
     //}
     #endif
+    printf("Address of global_var: %p   %p\n", (void*)&message_count ,(void*)&rx);
+    gpio_init(CAN0_INT_PIN);
+    gpio_set_dir(CAN0_INT_PIN, GPIO_IN);
+
+    gpio_pull_up(CAN0_INT_PIN);
+    gpio_set_irq_enabled_with_callback(
+            CAN0_INT_PIN,
+            GPIO_IRQ_EDGE_FALL,
+            true,
+            &say_hello);
+
+    #ifdef AUTO_CHECK_BITRATE
+    autoCheckBaudrate() ;
+    #else
+    checkBitrateSuccess = true;
+    aoto_bitrate = CAN_500KBPS;
+    can0.reset();
+    can0.setBitrate(CAN_500KBPS, MCP_8MHZ);
+    can0.setNormalMode();
+    #endif
+
     if(!checkBitrateSuccess){
         can0.reset();
         can0.setBitrate(CAN_500KBPS, MCP_8MHZ);
         can0.setNormalMode();
-        printf("Auto baudrate check failed, set default bitrate : %d\n", CAN_500KBPS);
+        printf("Auto baudrate check failed, set default bitrate : %s\n", SPEED_STR[CAN_500KBPS]);
     }else{
         gpio_put(LED_PIN, 1);
-        sleep_ms(3000);
-        can0.setNormalMode();
-        printf("Auto baudrate check success, set default bitrate : %d\n", CAN_500KBPS);
+        //sleep_ms(3000);
+        //can0.setNormalMode();
+        printf("Auto baudrate check success, set default bitrate : %s\n", SPEED_STR[aoto_bitrate]);
     }
     
     #ifdef SEND_CAN_EMBEDDED_DATA
@@ -347,7 +532,7 @@ int main() {
     }
     #else
     while(true) {
-        
+        #if 0
         if(can0.readMessage(&rx) == MCP2515::ERROR_OK) {
             //printf("New frame from ID: %10x  %10x   %10x  %10x \n", rx.can_id,rx.can_id&CAN_ERR_MASK,rx.can_id&CAN_EFF_FLAG,rx.can_id&CAN_RTR_FLAG);
             
@@ -362,6 +547,7 @@ int main() {
             printPacket(&txPacket);
             led_on_time_count = LED_ON_TIME;
         }
+        #endif
         int ch = getchar_timeout_us(0);  // 非阻塞获取输入字符
         //printf("led_on_time_count %d \n",led_on_time_count);
         if (ch != PICO_ERROR_TIMEOUT) {
