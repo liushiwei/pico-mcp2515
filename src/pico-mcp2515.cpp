@@ -12,11 +12,20 @@
 #include <stdint.h>
 #include <string.h>
 #include <ctype.h>
-#include <stdio.h>
 #include <iostream>
 #include <bitset>
 #include "hardware/gpio.h"
+#include "hardware/watchdog.h"
 #include "pico/bootrom.h"
+
+
+#define RESET_PIN 21 // 板子烧录开关
+absolute_time_t  press_start ;
+#define LONG_PRESS_MS 1000  // 长按阈值：2 秒
+__attribute__((section(".data.ramfunc"))) void jump_to_usb_boot() {
+    reset_usb_boot(0, 0);  // 进入 USB BOOT 模式
+}
+
 
 //#define SEND_CAN_EMBEDDED_DATA
 #define AUTO_CHECK_BITRATE
@@ -30,11 +39,6 @@ int can_mode = 0; // 1为正常模式，0为自动检测波特率模式
 #define CAN0_INT_PIN 2 // CAN0中断引脚
 
 
-#define RESET_PIN 21 // 板子烧录开关
-
-__attribute__((section(".data.ramfunc"))) void jump_to_usb_boot() {
-    reset_usb_boot(0, 0);  // 进入 USB BOOT 模式
-}
 
 
 const uint8_t SIDL_EXTENDED_MSGID = 1U << 3U;
@@ -352,8 +356,22 @@ void all_interrupts(uint gpio, uint32_t event) {
                 << std::bitset<32>(event)
                 << std::endl;
     #endif
-    if(gpio == RESET_PIN && (event & GPIO_IRQ_EDGE_FALL)) // 如果 GPIO 2 上升沿触发
-        jump_to_usb_boot();
+    if(gpio == RESET_PIN && (event & GPIO_IRQ_EDGE_FALL)) // 如果 GPIO 21 上升沿触发
+    {
+        press_start = get_absolute_time();
+        printf("Reset pin LOW, \n");
+    }
+    if(gpio == RESET_PIN && (event & GPIO_IRQ_EDGE_RISE)) // 如果 GPIO 21 上升沿触发
+    {
+        uint32_t held_time =  absolute_time_diff_us(press_start, get_absolute_time()) / 1000;
+        if (held_time < LONG_PRESS_MS) {        // 短按重启
+            printf("Reset pin short press reboot .\n", held_time);
+            watchdog_reboot(0, 0, 0); // 软件重启
+        }else{                      // 长按进入烧录模式
+            printf("Reset pin LONG_PRESS_MS , jump_to_usb_boot.\n");
+            jump_to_usb_boot();
+        }
+    }
     uint8_t status = can0.getInterrupts();
     if(status&0x03 && !(status&0x80)){
 
@@ -484,7 +502,7 @@ int main() {
     gpio_set_dir(RESET_PIN, GPIO_OUT);
     //#ifdef RESET_PIN
     printf("----gpio_set_irq_enabled_with_callback %d  \n", RESET_PIN);
-    gpio_set_irq_enabled_with_callback(RESET_PIN, GPIO_IRQ_EDGE_FALL, true, &all_interrupts);
+    gpio_set_irq_enabled_with_callback(RESET_PIN, GPIO_IRQ_EDGE_RISE|GPIO_IRQ_EDGE_FALL, true, &all_interrupts);
     //#endif
     //printf("Address of global_var: %p   %p\n", (void*)&message_count ,(void*)&rx);
 
