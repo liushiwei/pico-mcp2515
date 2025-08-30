@@ -16,6 +16,7 @@
 #include <iostream>
 #include <bitset>
 #include "hardware/gpio.h"
+#include "pico/bootrom.h"
 
 //#define SEND_CAN_EMBEDDED_DATA
 #define AUTO_CHECK_BITRATE
@@ -26,7 +27,14 @@ int aoto_bitrate = 0; //自动检测的波特率
 u_int8_t message_count = 0; // 消息计数器
 int can_mode = 0; // 1为正常模式，0为自动检测波特率模式
 
-#define CAN0_INT_PIN 12 // CAN0中断引脚
+#define CAN0_INT_PIN 2 // CAN0中断引脚
+
+
+#define RESET_PIN 21 // 板子烧录开关
+
+__attribute__((section(".data.ramfunc"))) void jump_to_usb_boot() {
+    reset_usb_boot(0, 0);  // 进入 USB BOOT 模式
+}
 
 
 const uint8_t SIDL_EXTENDED_MSGID = 1U << 3U;
@@ -335,7 +343,7 @@ void autoCheckBaudrate() {
   
 }
 
-void say_hello(uint gpio, uint32_t event) {
+void all_interrupts(uint gpio, uint32_t event) {
     #if 0
     std::cout   << time_us_64()
                 << " IRQ: gpio "
@@ -344,6 +352,8 @@ void say_hello(uint gpio, uint32_t event) {
                 << std::bitset<32>(event)
                 << std::endl;
     #endif
+    if(gpio == RESET_PIN && (event & GPIO_IRQ_EDGE_FALL)) // 如果 GPIO 2 上升沿触发
+        jump_to_usb_boot();
     uint8_t status = can0.getInterrupts();
     if(status&0x03 && !(status&0x80)){
 
@@ -448,6 +458,7 @@ void say_hello(uint gpio, uint32_t event) {
 	can0.clearInterrupts();
 				
 }
+
 int main() {
     stdio_init_all();
     message_count = 0;
@@ -469,7 +480,14 @@ int main() {
      //   sleep_ms(250);
     //}
     #endif
-    printf("Address of global_var: %p   %p\n", (void*)&message_count ,(void*)&rx);
+    gpio_put(RESET_PIN, 1);
+    gpio_set_dir(RESET_PIN, GPIO_OUT);
+    //#ifdef RESET_PIN
+    printf("----gpio_set_irq_enabled_with_callback %d  \n", RESET_PIN);
+    gpio_set_irq_enabled_with_callback(RESET_PIN, GPIO_IRQ_EDGE_FALL, true, &all_interrupts);
+    //#endif
+    //printf("Address of global_var: %p   %p\n", (void*)&message_count ,(void*)&rx);
+
     gpio_init(CAN0_INT_PIN);
     gpio_set_dir(CAN0_INT_PIN, GPIO_IN);
 
@@ -478,13 +496,14 @@ int main() {
             CAN0_INT_PIN,
             GPIO_IRQ_EDGE_FALL,
             true,
-            &say_hello);
+            &all_interrupts);
 
     #ifdef AUTO_CHECK_BITRATE
     autoCheckBaudrate() ;
     #else
     checkBitrateSuccess = true;
     aoto_bitrate = CAN_500KBPS;
+
     can0.reset();
     can0.setBitrate(CAN_500KBPS, MCP_8MHZ);
     can0.setNormalMode();
@@ -501,7 +520,7 @@ int main() {
         //can0.setNormalMode();
         printf("Auto baudrate check success, set default bitrate : %s\n", SPEED_STR[aoto_bitrate]);
     }
-    
+
     #ifdef SEND_CAN_EMBEDDED_DATA
     //Listen loop
     char line_buffer[128];
