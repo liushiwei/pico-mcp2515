@@ -17,6 +17,7 @@
 #include "hardware/gpio.h"
 #include "hardware/watchdog.h"
 #include "pico/bootrom.h"
+#include "hardware/sync.h"
 
 
 #define RESET_PIN 21 // 板子烧录开关
@@ -26,8 +27,8 @@ __attribute__((section(".data.ramfunc"))) void jump_to_usb_boot() {
     reset_usb_boot(0, 0);  // 进入 USB BOOT 模式
 }
 
-
-//#define SEND_CAN_EMBEDDED_DATA
+#define TX_SPINLOCK_ID 0  // 使用硬件 spinlock 0
+//#define SEND_CAN_EMBEDDED_DATA  // 发送嵌入式数据
 #define AUTO_CHECK_BITRATE
 #define LED_ON_TIME 10000
 int led_on_time_count = LED_ON_TIME; //LED亮的时间计数器
@@ -36,7 +37,28 @@ int aoto_bitrate = 0; //自动检测的波特率
 u_int8_t message_count = 0; // 消息计数器
 int can_mode = 0; // 1为正常模式，0为自动检测波特率模式
 
-#define CAN0_INT_PIN 2 // CAN0中断引脚
+#define CAN1_INT_PIN 2 // CAN1中断引脚
+MCP2515 can0; //can1 接受
+//struct can_frame rx;
+struct can_frame canMsg1;
+
+#define CAN2_INT_PIN 3 // CAN2中断引脚
+
+MCP2515 can1; //can2 接受
+//struct can_frame rx;
+struct can_frame canMsg2;
+
+const char * SEPARATOR = ",";
+const char *  TERMINATOR = "\n";
+enum
+{
+	PKG_STATE_STRART,
+    PKG_STATE_ID,
+    PKG_STATE_RTR,
+    PKG_STATE_IDE,
+    PKG_STATE_DATA,
+};
+uint8_t state = PKG_STATE_STRART;
 
 
 
@@ -122,21 +144,6 @@ bool text_reader_next_line(TextReader* reader) {
     return true;
 }
 #endif // SEND_CAN_EMBEDDED_DATA
-MCP2515 can0;
-struct can_frame rx;
-struct can_frame canMsg1;
-const char * SEPARATOR = ",";
-const char *  TERMINATOR = "\n";
-enum
-{
-	PKG_STATE_STRART,
-    PKG_STATE_ID,
-    PKG_STATE_RTR,
-    PKG_STATE_IDE,
-    PKG_STATE_DATA,
-};
-uint8_t state = PKG_STATE_STRART;
-
 
 uint8_t hex_string_to_bytes(const char *hex_str) {
      uint8_t high_val = (hex_str[0] <= '9') ? (hex_str[0] - '0') : 
@@ -273,24 +280,72 @@ void host_packet_analyze(uint8_t data)
   }
   
 }
+#if 0
+int long_to_hex_manual(long value, char *out_str) {
+    const char hex_chars[] = "0123456789ABCDEF";
+    char buffer[32];
+    int i = 0;
+
+    if (value == 0) {
+        out_str[0] = '0';
+        out_str[1] = '\0';
+        return 1;
+    }
+
+    while (value > 0) {
+        buffer[i++] = hex_chars[value & 0xF];
+        value >>= 4;
+    }
+
+    // 反转字符串
+    int j = 0;
+    while (i > 0) {
+        out_str[j++] = buffer[--i];
+    }
+    out_str[j] = '\0';
+    return j; // 返回字符串长度
+}
+
+void fastPrint(const char * prints) {
+    //const char *s = "Hello RP2040";
+    while (*prints) {
+        putchar_raw(*prints++);
+    }
+}
+void fastPrint(char * prints, int len) {
+    //const char *s = "Hello RP2040";
+    int i = 0;
+    while (i < len && *prints) {
+        putchar_raw(prints[i++]);
+    }
+}
+#endif 
 void printHex(long num) {
   //if ( num < 0x10 ){ Serial.print("0"); }
   printf("%02X", num);
 }
-void printPacket(packet_t * packet) {
-  // packet format (hex string): [ID],[RTR],[IDE],[DATABYTES 0..8B]\n
-  // example: 014A,00,00,1A002B003C004D\n
-  printHex(packet->id);
-  printf(SEPARATOR);
-  printHex(packet->rtr);
-  printf(SEPARATOR);
-  printHex(packet->ide);
-  printf(SEPARATOR);
-  // DLC is determinded by number of data bytes, format: [00]
-  for (int i = 0; i < packet->dlc; i++) {
-    printHex(packet->dataArray[i]);
-  }
-  printf(TERMINATOR);
+void printPacket(int channel ,packet_t * packet) {
+    //uint32_t save = spin_lock_blocking(spin_lock_instance(TX_SPINLOCK_ID));
+    // packet format (hex string): [ID],[RTR],[IDE],[DATABYTES 0..8B]\n
+    // example: 014A,00,00,1A002B003C004D\n
+    if(channel == 0)
+        printf("A");
+    else if(channel == 1)
+        printf("B");
+    else
+        printf("L");
+    printHex(packet->id);
+    printf(SEPARATOR);
+    printHex(packet->rtr);
+    printf(SEPARATOR);
+    printHex(packet->ide);
+    printf(SEPARATOR);
+    // DLC is determinded by number of data bytes, format: [00]
+    for (int i = 0; i < packet->dlc; i++) {
+        printHex(packet->dataArray[i]);
+    }
+    printf(TERMINATOR);
+    //spin_unlock(spin_lock_instance(TX_SPINLOCK_ID), save);
 }
 
 
@@ -347,31 +402,7 @@ void autoCheckBaudrate() {
   
 }
 
-void all_interrupts(uint gpio, uint32_t event) {
-    #if 0
-    std::cout   << time_us_64()
-                << " IRQ: gpio "
-                << gpio
-                << " event "
-                << std::bitset<32>(event)
-                << std::endl;
-    #endif
-    if(gpio == RESET_PIN && (event & GPIO_IRQ_EDGE_FALL)) // 如果 GPIO 21 上升沿触发
-    {
-        press_start = get_absolute_time();
-        printf("Reset pin LOW, \n");
-    }
-    if(gpio == RESET_PIN && (event & GPIO_IRQ_EDGE_RISE)) // 如果 GPIO 21 上升沿触发
-    {
-        uint32_t held_time =  absolute_time_diff_us(press_start, get_absolute_time()) / 1000;
-        if (held_time < LONG_PRESS_MS) {        // 短按重启
-            printf("Reset pin short press reboot .\n", held_time);
-            watchdog_reboot(0, 0, 0); // 软件重启
-        }else{                      // 长按进入烧录模式
-            printf("Reset pin LONG_PRESS_MS , jump_to_usb_boot.\n");
-            jump_to_usb_boot();
-        }
-    }
+void can1_interrupts(uint gpio, uint32_t event) {
     uint8_t status = can0.getInterrupts();
     if(status&0x03 && !(status&0x80)){
 
@@ -405,7 +436,7 @@ void all_interrupts(uint gpio, uint32_t event) {
             memcpy(txPacket.dataArray, &rx[6], txPacket.dlc);
             message_count++;
             if(checkBitrateSuccess)
-            printPacket(&txPacket);
+            printPacket(0,&txPacket);
             led_on_time_count = LED_ON_TIME;
 		}
 		else if(status&0x02)
@@ -437,7 +468,7 @@ void all_interrupts(uint gpio, uint32_t event) {
             memcpy(txPacket.dataArray, &rx[6], txPacket.dlc);
             message_count++;
             if(checkBitrateSuccess)
-            printPacket(&txPacket);
+            printPacket(0,&txPacket);
             led_on_time_count = LED_ON_TIME;
 		}
 		else;
@@ -474,6 +505,147 @@ void all_interrupts(uint gpio, uint32_t event) {
     }
     
 	can0.clearInterrupts();
+}
+
+void can2_interrupts(uint gpio, uint32_t event) {
+    uint8_t status = can1.getInterrupts();
+    if(status&0x03 && !(status&0x80)){
+
+        status = can1.getStatus();
+        if(status&0x01)
+		{
+			status &= 0xfe;
+			uint8_t tx[14] = {
+            0x90,
+            };
+            uint8_t rx[sizeof(tx)] = {0};
+            spi_transmit(tx, rx, sizeof(tx));
+            //if(can1.checkError()){
+            //    printf("CANINTF_RX0IF  recive Error \n");
+            //}
+            can1.modifyRegister(MCP2515::REGISTER::MCP_CANINTF, MCP2515::CANINTF::CANINTF_RX0IF, 0);
+            packet_t txPacket;
+            txPacket.dlc = rx[5] & 0b1111;
+            if(rx[2] & SIDL_EXTENDED_MSGID) {
+                txPacket.id =  (rx[1] << 21U)
+                    | ((rx[2] >> 5U) << 18U)
+                    | ((rx[2] & 0b11) << 16U)
+                    | (rx[3] << 8U)
+                    | rx[4]
+                    | (1 << 31U); // extended frame, see linux/can.h
+            } else {
+                txPacket.id =  (rx[1] << 3U) | (rx[2] >> 5U);
+            }
+            txPacket.ide = (txPacket.id&CAN_EFF_FLAG) > 0 ? 1 : 0;
+            txPacket.rtr = (txPacket.id&CAN_RTR_FLAG) > 0 ? 1 : 0;
+            memcpy(txPacket.dataArray, &rx[6], txPacket.dlc);
+            message_count++;
+            if(checkBitrateSuccess)
+            printPacket(1,&txPacket);
+            led_on_time_count = LED_ON_TIME;
+		}
+		else if(status&0x02)
+		{
+			status &= 0xfd;
+			uint8_t tx[14] = {
+            0x94,
+            };
+            uint8_t rx[sizeof(tx)] = {0};
+            spi_transmit(tx, rx, sizeof(tx));
+            //if(can1.checkError()){
+            //    printf("CANINTF_RX1IF recive Error \n");
+            //}
+            can1.modifyRegister(MCP2515::REGISTER::MCP_CANINTF, MCP2515::CANINTF::CANINTF_RX1IF, 0);
+            packet_t txPacket;
+            txPacket.dlc = rx[5] & 0b1111;
+            if(rx[2] & SIDL_EXTENDED_MSGID) {
+                txPacket.id =  (rx[1] << 21U)
+                    | ((rx[2] >> 5U) << 18U)
+                    | ((rx[2] & 0b11) << 16U)
+                    | (rx[3] << 8U)
+                    | rx[4]
+                    | (1 << 31U); // extended frame, see linux/can.h
+            } else {
+                txPacket.id =  (rx[1] << 3U) | (rx[2] >> 5U);
+            }
+            txPacket.ide = (txPacket.id&CAN_EFF_FLAG) > 0 ? 1 : 0;
+            txPacket.rtr = (txPacket.id&CAN_RTR_FLAG) > 0 ? 1 : 0;
+            memcpy(txPacket.dataArray, &rx[6], txPacket.dlc);
+            message_count++;
+            if(checkBitrateSuccess)
+            printPacket(1,&txPacket);
+            led_on_time_count = LED_ON_TIME;
+		}
+		else;
+        
+        if((message_count > 20) && (can_mode == 0) ){
+            if(can1.setNormalMode()== MCP2515::ERROR_OK){
+                printf("== setNormalMode OK \n");
+                can_mode = 1 ;
+            }else{
+                can1.setNormalMode();
+                printf("== setNormalMode ERROR \n");
+            }
+        }
+        #if 0
+        printf("CAN RX0 Interrupt\n");
+        if(can1.readMessage(&rx) == MCP2515::ERROR_OK) {
+            //printf("New frame from ID: %10x  %10x   %10x  %10x \n", rx.can_id,rx.can_id&CAN_ERR_MASK,rx.can_id&CAN_EFF_FLAG,rx.can_id&CAN_RTR_FLAG);
+            
+            packet_t txPacket;
+            txPacket.id = rx.can_id&CAN_ERR_MASK;
+            txPacket.ide = (rx.can_id&CAN_EFF_FLAG) > 0 ? 1 : 0;
+            txPacket.rtr = (rx.can_id&CAN_RTR_FLAG) > 0 ? 1 : 0;
+            txPacket.dlc = rx.can_dlc;  
+            for (int i = 0; i < rx.can_dlc; i++) {
+                    txPacket.dataArray[i] = rx.data[i];
+                }
+            message_count++;
+            printPacket(&txPacket);
+            led_on_time_count = LED_ON_TIME;
+        }
+        #endif
+        
+
+    }
+    
+	can1.clearInterrupts();
+}
+void all_interrupts(uint gpio, uint32_t event) {
+    #if 0
+    std::cout   << time_us_64()
+                << " IRQ: gpio "
+                << gpio
+                << " event "
+                << std::bitset<32>(event)
+                << std::endl;
+    #endif
+   
+    if(gpio == CAN1_INT_PIN) {
+        //printf("CAN1_INT_PIN, \n");
+        can1_interrupts(gpio, event);
+    }else  if(gpio == CAN2_INT_PIN) {
+        //printf("CAN2_INT_PIN, \n");
+        can2_interrupts(gpio, event);
+    }
+    if(gpio == RESET_PIN && (event & GPIO_IRQ_EDGE_FALL)) // 如果 GPIO 21 上升沿触发
+    {
+        press_start = get_absolute_time();
+        printf("Reset pin LOW, \n");
+    }
+    if(gpio == RESET_PIN && (event & GPIO_IRQ_EDGE_RISE)) // 如果 GPIO 21 上升沿触发
+    {
+        uint32_t held_time =  absolute_time_diff_us(press_start, get_absolute_time()) / 1000;
+        if (held_time < LONG_PRESS_MS) {        // 短按重启
+            printf("Reset pin short press reboot .\n", held_time);
+            watchdog_reboot(0, 0, 0); // 软件重启
+        }else{                      // 长按进入烧录模式
+            printf("Reset pin LONG_PRESS_MS , jump_to_usb_boot.\n");
+            jump_to_usb_boot();
+        }
+    }
+    
+    
 				
 }
 
@@ -483,7 +655,7 @@ int main() {
     checkBitrateSuccess = 0;
     aoto_bitrate = 0;
     can_mode = 0;
-    memset(&rx, 0, sizeof(rx));
+    //memset(&rx, 0, sizeof(rx));
     #ifndef PICO_DEFAULT_LED_PIN
     #warning blink example requires a board with a regular LED
     #else
@@ -506,15 +678,25 @@ int main() {
     //#endif
     //printf("Address of global_var: %p   %p\n", (void*)&message_count ,(void*)&rx);
 
-    gpio_init(CAN0_INT_PIN);
-    gpio_set_dir(CAN0_INT_PIN, GPIO_IN);
+    gpio_init(CAN1_INT_PIN);
+    gpio_set_dir(CAN1_INT_PIN, GPIO_IN);
 
-    gpio_pull_up(CAN0_INT_PIN);
+    gpio_pull_up(CAN1_INT_PIN);
     gpio_set_irq_enabled_with_callback(
-            CAN0_INT_PIN,
+            CAN1_INT_PIN,
             GPIO_IRQ_EDGE_FALL,
             true,
             &all_interrupts);
+    gpio_init(CAN2_INT_PIN);
+    gpio_set_dir(CAN2_INT_PIN, GPIO_IN);
+
+    gpio_pull_up(CAN2_INT_PIN);
+    gpio_set_irq_enabled_with_callback(
+            CAN2_INT_PIN,
+            GPIO_IRQ_EDGE_FALL,
+            true,
+            &all_interrupts);
+
 
     #ifdef AUTO_CHECK_BITRATE
     autoCheckBaudrate() ;
