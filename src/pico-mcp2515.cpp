@@ -29,7 +29,7 @@ __attribute__((section(".data.ramfunc"))) void jump_to_usb_boot() {
 
 #define TX_SPINLOCK_ID 0  // 使用硬件 spinlock 0
 //#define SEND_CAN_EMBEDDED_DATA  // 发送嵌入式数据
-#define AUTO_CHECK_BITRATE
+//#define AUTO_CHECK_BITRATE
 #define LED_ON_TIME 10000
 int led_on_time_count = LED_ON_TIME; //LED亮的时间计数器
 u_int8_t checkBitrateSuccess = 0;//检测波特率成功标志
@@ -280,52 +280,43 @@ void host_packet_analyze(uint8_t data)
   }
   
 }
-#if 0
-int long_to_hex_manual(long value, char *out_str) {
-    const char hex_chars[] = "0123456789ABCDEF";
-    char buffer[32];
-    int i = 0;
-
-    if (value == 0) {
-        out_str[0] = '0';
-        out_str[1] = '\0';
-        return 1;
+#if 1
+int hex_upper_min2_to_buf(unsigned long v, char *buf) {
+    static const char hex[] = "0123456789ABCDEF";
+    if (v == 0) {                // special-case 0 -> "00"
+        buf[0] = '0';
+        buf[1] = '0';
+        return 2;
     }
 
-    while (value > 0) {
-        buffer[i++] = hex_chars[value & 0xF];
-        value >>= 4;
+    // 统计需要的十六进制位数（每位为一个 nibble）
+    int nibbles = 0;
+    unsigned long tmp = v;
+    while (tmp) {
+        tmp >>= 4;
+        ++nibbles;
+    }
+    if (nibbles < 2) nibbles = 2; // 至少两位
+
+    // 从最高 nibble 到最低 nibble 填充
+    for (int i = nibbles - 1, pos = 0; i >= 0; --i, ++pos) {
+        buf[pos] = hex[(v >> (i * 4)) & 0xF];
     }
 
-    // 反转字符串
-    int j = 0;
-    while (i > 0) {
-        out_str[j++] = buffer[--i];
-    }
-    out_str[j] = '\0';
-    return j; // 返回字符串长度
+    return nibbles;
 }
 
-void fastPrint(const char * prints) {
-    //const char *s = "Hello RP2040";
-    while (*prints) {
-        putchar_raw(*prints++);
-    }
-}
-void fastPrint(char * prints, int len) {
-    //const char *s = "Hello RP2040";
-    int i = 0;
-    while (i < len && *prints) {
-        putchar_raw(prints[i++]);
-    }
-}
 #endif 
 void printHex(long num) {
   //if ( num < 0x10 ){ Serial.print("0"); }
-  printf("%02X", num);
+  //printf("%02X", num);
+  char buf[32]; // 足够大（max 16 for 64-bit）
+  int len = hex_upper_min2_to_buf(num, buf);
+  buf[len] = '\0'; // 添加字符串终止符
+  printf(buf);
 }
 void printPacket(int channel ,packet_t * packet) {
-    //uint32_t save = spin_lock_blocking(spin_lock_instance(TX_SPINLOCK_ID));
+    uint32_t save = spin_lock_blocking(spin_lock_instance(TX_SPINLOCK_ID));
     // packet format (hex string): [ID],[RTR],[IDE],[DATABYTES 0..8B]\n
     // example: 014A,00,00,1A002B003C004D\n
     if(channel == 0)
@@ -345,7 +336,7 @@ void printPacket(int channel ,packet_t * packet) {
         printHex(packet->dataArray[i]);
     }
     printf(TERMINATOR);
-    //spin_unlock(spin_lock_instance(TX_SPINLOCK_ID), save);
+    spin_unlock(spin_lock_instance(TX_SPINLOCK_ID), save);
 }
 
 
@@ -779,6 +770,19 @@ int main() {
         }else{
             gpio_put(LED_PIN, 0);
         }
+        
+        #if 0
+        packet_t txPacket;
+        txPacket.dlc = 8;
+           
+        txPacket.id = 0x811; // extended frame, see linux/can.h
+          
+        txPacket.ide = 0;
+        txPacket.rtr = 0;
+        memset(txPacket.dataArray, 8, 8);
+        printPacket(0,&txPacket);
+        #endif
+        //printf("HELLO WORLD ----------------------\n");
         //can0.sendMessage(&canMsg1);
         //delay_ms(100);
         //printf("Send New frame from ID: %10x\n",  canMsg1.can_id);

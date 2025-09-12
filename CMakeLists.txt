@@ -70,6 +70,8 @@ pico_enable_stdio_usb(pico-mcp2515 1)
 target_link_libraries(pico-mcp2515
     pico_stdlib
     hardware_spi
+    hardware_watchdog
+    hardware_sync
 )
 
 pico_add_extra_outputs(pico-mcp2515)
