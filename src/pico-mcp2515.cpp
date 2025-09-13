@@ -29,13 +29,20 @@ __attribute__((section(".data.ramfunc"))) void jump_to_usb_boot() {
 
 #define TX_SPINLOCK_ID 0  // 使用硬件 spinlock 0
 //#define SEND_CAN_EMBEDDED_DATA  // 发送嵌入式数据
-//#define AUTO_CHECK_BITRATE
-#define LED_ON_TIME 10000
+#define AUTO_CHECK_BITRATE
+#define LED_ON_TIME 1000
 int led_on_time_count = LED_ON_TIME; //LED亮的时间计数器
-u_int8_t checkBitrateSuccess = 0;//检测波特率成功标志
-int aoto_bitrate = 0; //自动检测的波特率
-u_int8_t message_count = 0; // 消息计数器
-int can_mode = 0; // 1为正常模式，0为自动检测波特率模式
+u_int8_t can0CheckBitrateSuccess = 0;//检测波特率成功标志
+u_int8_t can1CheckBitrateSuccess = 0;//检测波特率成功标志
+int can0_auto_bitrate = 0; //自动检测的波特率
+int can1_auto_bitrate = 0; //自动检测的波特率
+u_int8_t can0_message_count = 0; // 消息计数器
+u_int8_t can1_message_count = 0; // 消息计数器
+int can0_mode = 0; // 1为正常模式，0为自动检测波特率模式
+int can1_mode = 0; // 1为正常模式，0为自动检测波特率模式
+u_int8_t can0_check_count = 200; // 消息计数器
+u_int8_t can1_check_count = 200; // 消息计数器
+
 
 #define CAN1_INT_PIN 2 // CAN1中断引脚
 MCP2515 can0; //can1 接受
@@ -358,7 +365,7 @@ void autoCheckBaudrate() {
     {
         //int bitrate = CAN_1000KBPS;
         for (int i = CAN_1000KBPS; i > -1; i--) {
-            message_count = 0;
+            can0_message_count = 0;
             if(can0.reset() == MCP2515::ERROR_OK){
                 printf("can0.reset OK \n");
             }
@@ -367,7 +374,7 @@ void autoCheckBaudrate() {
             printf("Set bitrate : %s\n", SPEED_STR[i]);
             if(can0.setListenOnlyMode() == MCP2515::ERROR_OK){
                 printf("Set listen only mode \n");
-                can_mode = 0 ;
+                can0_mode = 0 ;
             }else{
                 printf("Set listen only mode error \n");
             }
@@ -377,10 +384,10 @@ void autoCheckBaudrate() {
             while(j)
             {
                     
-                if(message_count > 100){
-                    printf("Auto baudrate found: %d\n", message_count);
-                    checkBitrateSuccess = true;
-                    aoto_bitrate = i;
+                if(can0_message_count > 100){
+                    printf("Auto baudrate found: %d\n", can0_message_count);
+                    can0CheckBitrateSuccess = true;
+                    can0_auto_bitrate = i;
                     return;
                 }
                 sleep_ms(10);
@@ -425,8 +432,9 @@ void can1_interrupts(uint gpio, uint32_t event) {
             txPacket.ide = (txPacket.id&CAN_EFF_FLAG) > 0 ? 1 : 0;
             txPacket.rtr = (txPacket.id&CAN_RTR_FLAG) > 0 ? 1 : 0;
             memcpy(txPacket.dataArray, &rx[6], txPacket.dlc);
-            message_count++;
-            if(checkBitrateSuccess)
+            can0_message_count++;
+            //printf("== can0_message_count ++ \n");
+            if(can0CheckBitrateSuccess)
             printPacket(0,&txPacket);
             led_on_time_count = LED_ON_TIME;
 		}
@@ -457,20 +465,21 @@ void can1_interrupts(uint gpio, uint32_t event) {
             txPacket.ide = (txPacket.id&CAN_EFF_FLAG) > 0 ? 1 : 0;
             txPacket.rtr = (txPacket.id&CAN_RTR_FLAG) > 0 ? 1 : 0;
             memcpy(txPacket.dataArray, &rx[6], txPacket.dlc);
-            message_count++;
-            if(checkBitrateSuccess)
+            can0_message_count++;
+            //printf("== can0_message_count ++ \n");
+            if(can0CheckBitrateSuccess)
             printPacket(0,&txPacket);
             led_on_time_count = LED_ON_TIME;
 		}
 		else;
         
-        if((message_count > 20) && (can_mode == 0) ){
+        if((can0_message_count > 20) && (can0_mode == 0) ){
             if(can0.setNormalMode()== MCP2515::ERROR_OK){
-                printf("== setNormalMode OK \n");
-                can_mode = 1 ;
+                //printf("== setNormalMode OK \n");
+                //can0_mode = 1 ;
             }else{
                 can0.setNormalMode();
-                printf("== setNormalMode ERROR \n");
+                printf("!SET_NORMALMODE_ERROR \n");
             }
         }
         #if 0
@@ -486,7 +495,7 @@ void can1_interrupts(uint gpio, uint32_t event) {
             for (int i = 0; i < rx.can_dlc; i++) {
                     txPacket.dataArray[i] = rx.data[i];
                 }
-            message_count++;
+            can0_message_count++;
             printPacket(&txPacket);
             led_on_time_count = LED_ON_TIME;
         }
@@ -530,8 +539,9 @@ void can2_interrupts(uint gpio, uint32_t event) {
             txPacket.ide = (txPacket.id&CAN_EFF_FLAG) > 0 ? 1 : 0;
             txPacket.rtr = (txPacket.id&CAN_RTR_FLAG) > 0 ? 1 : 0;
             memcpy(txPacket.dataArray, &rx[6], txPacket.dlc);
-            message_count++;
-            if(checkBitrateSuccess)
+            can1_message_count++;
+            //printf("== can1_message_count ++ \n");
+            if(can1CheckBitrateSuccess)
             printPacket(1,&txPacket);
             led_on_time_count = LED_ON_TIME;
 		}
@@ -562,20 +572,21 @@ void can2_interrupts(uint gpio, uint32_t event) {
             txPacket.ide = (txPacket.id&CAN_EFF_FLAG) > 0 ? 1 : 0;
             txPacket.rtr = (txPacket.id&CAN_RTR_FLAG) > 0 ? 1 : 0;
             memcpy(txPacket.dataArray, &rx[6], txPacket.dlc);
-            message_count++;
-            if(checkBitrateSuccess)
+            can1_message_count++;
+            //printf("== can1_message_count ++ \n");
+            if(can1CheckBitrateSuccess)
             printPacket(1,&txPacket);
             led_on_time_count = LED_ON_TIME;
 		}
 		else;
         
-        if((message_count > 20) && (can_mode == 0) ){
+        if((can1_message_count > 5) && (can1_mode == 0) ){
             if(can1.setNormalMode()== MCP2515::ERROR_OK){
-                printf("== setNormalMode OK \n");
-                can_mode = 1 ;
+                //printf("== setNormalMode OK \n");
+                //can1_mode = 1 ;
             }else{
                 can1.setNormalMode();
-                printf("== setNormalMode ERROR \n");
+                printf("!SET_NORMALMODE_ERROR \n");
             }
         }
         #if 0
@@ -591,7 +602,7 @@ void can2_interrupts(uint gpio, uint32_t event) {
             for (int i = 0; i < rx.can_dlc; i++) {
                     txPacket.dataArray[i] = rx.data[i];
                 }
-            message_count++;
+            can0_message_count++;
             printPacket(&txPacket);
             led_on_time_count = LED_ON_TIME;
         }
@@ -640,35 +651,106 @@ void all_interrupts(uint gpio, uint32_t event) {
 				
 }
 
+void auto_check_baudrate() {
+    if(can0_mode == 0&&(!can0CheckBitrateSuccess)){ //自动检测波特率模式
+        if(can0_check_count == 0){
+            led_on_time_count = 10;
+            can0_check_count = 200;
+            if( can0_auto_bitrate == CAN_5KBPS ) {
+            can0_auto_bitrate = CAN_1000KBPS;
+            }else{
+                can0_auto_bitrate--;
+            }
+        }
+        
+        if(can0_check_count == 200){ //第一次设置该波特率
+            can0_message_count = 0;
+            if(can0.reset() == MCP2515::ERROR_OK){
+                printf("!CAN0_RESET_OK \n");
+            }
+            sleep_ms(10);
+            can0.setBitrate((CAN_SPEED)can0_auto_bitrate, MCP_8MHZ);
+            printf("!CAN0_CHECK_BITRATE : %s\n", SPEED_STR[can0_auto_bitrate]);
+            if(can0.setListenOnlyMode() == MCP2515::ERROR_OK){
+                //printf("Set listen only mode \n");
+                can0_mode = 0 ;
+            }else{
+                printf("!CAN0_SET_LISTER_MODE_ERROR \n");
+            }
+        }
+        can0_check_count--;
+        if(can0_message_count > 100){
+            //printf("Auto baudrate found: %d\n", can0_message_count);
+            can0CheckBitrateSuccess = true;
+            gpio_put(PICO_DEFAULT_LED_PIN, 1);
+            printf("!CAN0_OK_SET_BITRATE:%s\n", SPEED_STR[can0_auto_bitrate]);
+            //can0_auto_bitrate = i;
+            //return;
+        }
+        sleep_ms(10);
+
+        
+    }
+    #if 0
+    if(can1_mode == 0&&(!can1CheckBitrateSuccess)){ //自动检测波特率模式
+        if(can1_check_count == 0){
+            led_on_time_count = 10;
+            can1_check_count = 200;
+            if( can1_auto_bitrate == CAN_5KBPS ) {
+            can1_auto_bitrate = CAN_1000KBPS;
+            }else{
+                can1_auto_bitrate--;
+            }
+        }
+        
+        if(can1_check_count == 200){ //第一次设置该波特率
+            can1_message_count = 0;
+            if(can1.reset() == MCP2515::ERROR_OK){
+                printf("!CAN1_RESET_OK \n");
+            }
+            sleep_ms(10);
+            can1.setBitrate((CAN_SPEED)can1_auto_bitrate, MCP_8MHZ);
+            printf("!CAN1_CHECK_BITRATE : %s\n", SPEED_STR[can1_auto_bitrate]);
+            if(can1.setListenOnlyMode() == MCP2515::ERROR_OK){
+                //printf("Set listen only mode \n");
+                can1_mode = 0 ;
+            }else{
+                printf("!CAN0_SET_LISTER_MODE_ERROR \n");
+            }
+        }
+        can1_check_count--;
+        if(can1_message_count > 100){
+            //printf("Auto baudrate found: %d\n", can1_message_count);
+            can1CheckBitrateSuccess = true;
+            gpio_put(PICO_DEFAULT_LED_PIN, 1);
+            printf("!CAN1_OK_SET_BITRATE:%s\n", SPEED_STR[can0_auto_bitrate]);
+            //can0_auto_bitrate = i;
+            //return;
+        }
+        sleep_ms(10);
+
+        
+    }
+    #endif
+};
+
 int main() {
     stdio_init_all();
-    message_count = 0;
-    checkBitrateSuccess = 0;
-    aoto_bitrate = 0;
-    can_mode = 0;
-    //memset(&rx, 0, sizeof(rx));
+    can0CheckBitrateSuccess = 0;
     #ifndef PICO_DEFAULT_LED_PIN
     #warning blink example requires a board with a regular LED
     #else
-    const uint LED_PIN = PICO_DEFAULT_LED_PIN;
-    gpio_init(LED_PIN);
-    gpio_set_dir(LED_PIN, GPIO_OUT);
-    //gpio_put(LED_PIN, 1);
-    //while (true) {
-     //   gpio_put(LED_PIN, 1);
-     //   sleep_ms(250);
-     //   gpio_put(LED_PIN, 0);
-     //   sleep_ms(250);
-    //}
+    //const uint LED_PIN = PICO_DEFAULT_LED_PIN;
+    gpio_init(PICO_DEFAULT_LED_PIN);
+    gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
+
     #endif
+    //设置复位按键中断回调函数
     gpio_put(RESET_PIN, 1);
     gpio_set_dir(RESET_PIN, GPIO_OUT);
-    //#ifdef RESET_PIN
-    printf("----gpio_set_irq_enabled_with_callback %d  \n", RESET_PIN);
-    gpio_set_irq_enabled_with_callback(RESET_PIN, GPIO_IRQ_EDGE_RISE|GPIO_IRQ_EDGE_FALL, true, &all_interrupts);
-    //#endif
-    //printf("Address of global_var: %p   %p\n", (void*)&message_count ,(void*)&rx);
+    gpio_set_irq_enabled_with_callback(RESET_PIN, GPIO_IRQ_EDGE_RISE|GPIO_IRQ_EDGE_FALL, true, &all_interrupts);  
 
+    //设置CAN1中断回调函数
     gpio_init(CAN1_INT_PIN);
     gpio_set_dir(CAN1_INT_PIN, GPIO_IN);
 
@@ -678,6 +760,8 @@ int main() {
             GPIO_IRQ_EDGE_FALL,
             true,
             &all_interrupts);
+
+    //设置CAN2中断回调函数
     gpio_init(CAN2_INT_PIN);
     gpio_set_dir(CAN2_INT_PIN, GPIO_IN);
 
@@ -690,28 +774,28 @@ int main() {
 
 
     #ifdef AUTO_CHECK_BITRATE
-    autoCheckBaudrate() ;
+    //autoCheckBaudrate() ;
     #else
-    checkBitrateSuccess = true;
-    aoto_bitrate = CAN_500KBPS;
+    can0CheckBitrateSuccess = true;
+    can0_auto_bitrate = CAN_500KBPS;
 
     can0.reset();
     can0.setBitrate(CAN_500KBPS, MCP_8MHZ);
     can0.setNormalMode();
     #endif
-
-    if(!checkBitrateSuccess){
+    #if 0
+    if(!can0CheckBitrateSuccess){
         can0.reset();
         can0.setBitrate(CAN_500KBPS, MCP_8MHZ);
         can0.setNormalMode();
-        printf("Auto baudrate check failed, set default bitrate : %s\n", SPEED_STR[CAN_500KBPS]);
+        printf("!AUTO_CHECK_FAILED_SET_BITRATE:%s\n", SPEED_STR[CAN_500KBPS]);
     }else{
         gpio_put(LED_PIN, 1);
         //sleep_ms(3000);
         //can0.setNormalMode();
-        printf("Auto baudrate check success, set default bitrate : %s\n", SPEED_STR[aoto_bitrate]);
+        printf("!OK_SET_BITRATE:%s\n", SPEED_STR[can0_auto_bitrate]);
     }
-
+    #endif
     #ifdef SEND_CAN_EMBEDDED_DATA
     //Listen loop
     char line_buffer[128];
@@ -742,22 +826,7 @@ int main() {
     }
     #else
     while(true) {
-        #if 0
-        if(can0.readMessage(&rx) == MCP2515::ERROR_OK) {
-            //printf("New frame from ID: %10x  %10x   %10x  %10x \n", rx.can_id,rx.can_id&CAN_ERR_MASK,rx.can_id&CAN_EFF_FLAG,rx.can_id&CAN_RTR_FLAG);
-            
-            packet_t txPacket;
-            txPacket.id = rx.can_id&CAN_ERR_MASK;
-            txPacket.ide = (rx.can_id&CAN_EFF_FLAG) > 0 ? 1 : 0;
-            txPacket.rtr = (rx.can_id&CAN_RTR_FLAG) > 0 ? 1 : 0;
-            txPacket.dlc = rx.can_dlc;  
-            for (int i = 0; i < rx.can_dlc; i++) {
-                    txPacket.dataArray[i] = rx.data[i];
-                }
-            printPacket(&txPacket);
-            led_on_time_count = LED_ON_TIME;
-        }
-        #endif
+        
         int ch = getchar_timeout_us(0);  // 非阻塞获取输入字符
         //printf("led_on_time_count %d \n",led_on_time_count);
         if (ch != PICO_ERROR_TIMEOUT) {
@@ -765,12 +834,12 @@ int main() {
         }
         
         if(led_on_time_count > 0){
-            gpio_put(LED_PIN, 1);
+            gpio_put(PICO_DEFAULT_LED_PIN, 1);
             led_on_time_count--;
         }else{
-            gpio_put(LED_PIN, 0);
+            gpio_put(PICO_DEFAULT_LED_PIN, 0);
         }
-        
+        auto_check_baudrate();
         #if 0
         packet_t txPacket;
         txPacket.dlc = 8;
