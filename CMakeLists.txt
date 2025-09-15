@@ -54,6 +54,7 @@ add_executable(pico-mcp2515
 
     # Main executalbes
     src/pico-mcp2515.cpp
+    src/lin/lin.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/text_data.o
 )
 

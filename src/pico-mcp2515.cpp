@@ -18,7 +18,7 @@
 #include "hardware/watchdog.h"
 #include "pico/bootrom.h"
 #include "hardware/sync.h"
-
+#include "lin/lin.h"
 
 #define RESET_PIN 21 // 板子烧录开关
 absolute_time_t  press_start ;
@@ -34,15 +34,21 @@ __attribute__((section(".data.ramfunc"))) void jump_to_usb_boot() {
 int led_on_time_count = LED_ON_TIME; //LED亮的时间计数器
 u_int8_t can0CheckBitrateSuccess = 0;//检测波特率成功标志
 u_int8_t can1CheckBitrateSuccess = 0;//检测波特率成功标志
+u_int8_t linCheckBitrateSuccess = 0;//检测波特率成功标志
 int can0_auto_bitrate = 0; //自动检测的波特率
 int can1_auto_bitrate = 0; //自动检测的波特率
-u_int8_t can0_message_count = 0; // 消息计数器
-u_int8_t can1_message_count = 0; // 消息计数器
+int lin_auto_bitrate = 0; //自动检测的波特率
+u_int8_t can0_message_count = 0; //有效消息计数器
+u_int8_t can1_message_count = 0; // 有效消息计数器
+
 int can0_mode = 0; // 1为正常模式，0为自动检测波特率模式
 int can1_mode = 0; // 1为正常模式，0为自动检测波特率模式
+int lin_mode = 0; // 1为正常模式，0为自动检测波特率模式
 u_int8_t can0_check_count = 200; // 消息计数器
 u_int8_t can1_check_count = 200; // 消息计数器
-
+u_int8_t lin_check_count = 200; // 消息计数器
+uint8_t lin_head[2];
+uint8_t lin_head_index = 0;
 
 #define CAN1_INT_PIN 2 // CAN1中断引脚
 MCP2515 can0; //can1 接受
@@ -54,6 +60,8 @@ struct can_frame canMsg1;
 MCP2515 can1; //can2 接受
 //struct can_frame rx;
 struct can_frame canMsg2;
+
+
 
 const char * SEPARATOR = ",";
 const char *  TERMINATOR = "\n";
@@ -651,7 +659,9 @@ void all_interrupts(uint gpio, uint32_t event) {
 				
 }
 
+
 void auto_check_baudrate() {
+    #if 0
     if(can0_mode == 0&&(!can0CheckBitrateSuccess)){ //自动检测波特率模式
         if(can0_check_count == 0){
             led_on_time_count = 10;
@@ -691,7 +701,7 @@ void auto_check_baudrate() {
 
         
     }
-    #if 0
+    
     if(can1_mode == 0&&(!can1CheckBitrateSuccess)){ //自动检测波特率模式
         if(can1_check_count == 0){
             led_on_time_count = 10;
@@ -732,6 +742,36 @@ void auto_check_baudrate() {
         
     }
     #endif
+    if(lin_mode == 0&&(!linCheckBitrateSuccess)){ //自动检测波特率模式
+        if(lin_check_count == 0){
+            led_on_time_count = 10;
+            lin_check_count = 200;
+            baud_check_len = 0;
+            memset(baud_check_buf, 0, sizeof(baud_check_buf));
+            if( lin_auto_bitrate == LIN_20KBPS ) {
+                lin_auto_bitrate = LIN_1KBPS;
+            }else{
+                lin_auto_bitrate--;
+            }
+        }
+        if(lin_check_count == 200){ //第一次设置该波特率
+            lin_init(lin_common_baud[lin_auto_bitrate]);
+            sleep_ms(50); // 给总线稳定时间
+        }
+        lin_check_count--;
+
+        
+        if(is_lin_baudrate_ok()){
+            linCheckBitrateSuccess = true;
+            gpio_put(PICO_DEFAULT_LED_PIN, 1);
+            printf("!LIN_OK_SET_BITRATE:%u\n", lin_common_baud[lin_auto_bitrate]);
+            
+        }
+
+        sleep_ms(10);
+
+        
+    }
 };
 
 int main() {
