@@ -55,6 +55,7 @@ add_executable(pico-mcp2515
     # Main executalbes
     src/pico-mcp2515.cpp
     src/lin/lin.cpp
+    src/core1.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/text_data.o
 )
 
@@ -73,6 +74,7 @@ target_link_libraries(pico-mcp2515
     hardware_spi
     hardware_watchdog
     hardware_sync
+    pico_multicore
 )
 
 pico_add_extra_outputs(pico-mcp2515)

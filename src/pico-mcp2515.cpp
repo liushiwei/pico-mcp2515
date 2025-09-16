@@ -19,6 +19,8 @@
 #include "pico/bootrom.h"
 #include "hardware/sync.h"
 #include "lin/lin.h"
+#include "pico/multicore.h"
+#include "core1.h"
 
 #define RESET_PIN 21 // 板子烧录开关
 absolute_time_t  press_start ;
@@ -659,7 +661,7 @@ void all_interrupts(uint gpio, uint32_t event) {
 				
 }
 
-
+#if 0
 void auto_check_baudrate() {
     #if 0
     if(can0_mode == 0&&(!can0CheckBitrateSuccess)){ //自动检测波特率模式
@@ -773,9 +775,10 @@ void auto_check_baudrate() {
         
     }
 };
-
+#endif
 int main() {
     stdio_init_all();
+    multicore_launch_core1(core1_entry);
     can0CheckBitrateSuccess = 0;
     #ifndef PICO_DEFAULT_LED_PIN
     #warning blink example requires a board with a regular LED
@@ -879,7 +882,7 @@ int main() {
         }else{
             gpio_put(PICO_DEFAULT_LED_PIN, 0);
         }
-        auto_check_baudrate();
+        //auto_check_baudrate();
         #if 0
         packet_t txPacket;
         txPacket.dlc = 8;

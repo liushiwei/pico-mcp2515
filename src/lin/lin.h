@@ -48,4 +48,5 @@ void lin_init(int baudrate);
 uint8_t lin_calc_pid(uint8_t id);
 //uint8_t lin_checksum(uint8_t *data, int len, uint8_t pid, bool enhanced);
 uint8_t is_lin_baudrate_ok(void);
+void lin_poll_timeout(void);
 #endif
