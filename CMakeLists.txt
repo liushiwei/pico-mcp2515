@@ -60,7 +60,7 @@ add_executable(pico-mcp2515
 )
 
 # Add MCP2515 Lib
-target_include_directories(pico-mcp2515 PUBLIC include/)
+target_include_directories(pico-mcp2515 PUBLIC include/ src)
 
 pico_set_program_name(pico-mcp2515 "pico-mcp2515")
 pico_set_program_version(pico-mcp2515 "0.1")

@@ -1,5 +1,8 @@
 #include "lin.h"
 #include <inttypes.h>
+#include "pico-mcp2515.h"
+#include <string.h>
+
 int baud_check_len = 0;
 uint32_t lin_common_baud[] = {20000,19200,18000,17000,16000,15000,14000,13000,12000,11000, 
                                 10400,10000,9600, 9000,8000,7000,6000,5000,4000,3000,2400,2000,1200,1000};
@@ -38,6 +41,33 @@ uint8_t prev_data = 0;
 long lin_time_bytes_us(int bytes, int baud);
 uint32_t lin_flash_timeout_us = 0; // LIN接收超时标志
 uint64_t state_start_time_us = 0;
+
+
+// --- 辅助函数：校验和（支持 enhanced 或 classic） ---
+static uint8_t lin_checksum(uint8_t *data, int len, uint8_t pid, bool enhanced) {
+    uint16_t sum = 0;
+    if (enhanced) sum += pid;
+    for (int i = 0; i < len; i++) sum += data[i];
+    // 折叠高位
+    while (sum > 0xFF) sum = (sum & 0xFF) + (sum >> 8);
+    return (uint8_t)(~sum);
+}
+
+// --- 打印帧内容（调试用） ---
+static void print_lin_frame(uint8_t pid, uint8_t *data, int len) {
+    packet_t linPacket;
+    linPacket.id = pid & 0x3F;
+    linPacket.dlc = len;
+    linPacket.rtr = 0;
+    linPacket.ide = 0;
+    if(len>0)
+    memcpy(linPacket.dataArray, data, len);
+    printPacket(2,&linPacket);
+    //printf("[LIN] ID=0x%02X LEN=%d DATA=", pid & 0x3F, len);
+    //for (int i = 0; i < len; i++) printf(" %02X", data[i]);
+    //printf("\n");
+}
+
 // 在主循环里调用，负责超时检测
 void lin_poll_timeout() {
     if(!linCheckBitrateSuccess)
@@ -46,9 +76,23 @@ void lin_poll_timeout() {
     if ((state_start_time_us!=0) && (lin_state == LIN_RECV_DATA||lin_state == LIN_RECV_CHECKSUM)) {
         //printf("[LIN]  state_start_time_us = %" PRIu64 "  ,x = %" PRIu64 " ,lin_flash_timeout_us = %ld ,frame_pos = %d\n",state_start_time_us,(now - state_start_time_us),lin_flash_timeout_us,frame_pos);
         if ((now - state_start_time_us) > lin_flash_timeout_us) {
-            printf("[LIN]  Time OUT !!!! state_start_time_us = %" PRIu64 "  ,x = %" PRIu64 " ,lin_flash_timeout_us = %ld ,frame_pos = %d\n",state_start_time_us,(now - state_start_time_us),lin_flash_timeout_us,frame_pos);
+            //printf("[LIN]  Time OUT !!!! state_start_time_us = %" PRIu64 "  ,x = %" PRIu64 " ,lin_flash_timeout_us = %ld ,frame_pos = %d\n",state_start_time_us,(now - state_start_time_us),lin_flash_timeout_us,frame_pos);
             //printf("[LIN] timeout in state %ld  now %lu  state_start_time_us %lu \n",lin_flash_timeout_us,now,state_start_time_us);
             //lin_enter_state(LIN_WAIT_BREAK);
+            //frame_pos = 0;
+            if(frame_pos > 1){
+                uint8_t calc_e = lin_checksum(frame_buf, frame_pos-1, current_pid, true);
+                uint8_t calc_c = lin_checksum(frame_buf, frame_pos-1, current_pid, false);
+                //frame_buf[frame_pos-1] = 
+                //printf("[LIN]  frame_buf[frame_pos-1] = %02X  calc_e %02X  calc_c %02X \n",frame_buf[frame_pos-1],calc_e,calc_c);
+                if(frame_buf[frame_pos-1] == calc_e || frame_buf[frame_pos-1] == calc_c) {
+                    print_lin_frame(current_pid, frame_buf, frame_pos-1);
+                }
+                
+            }else{
+                print_lin_frame(current_pid, frame_buf, 0);
+            }
+            
             break_seen = false;
             sync_skip_cnt = 0;
             lin_state = LIN_WAIT_BREAK;
@@ -103,15 +147,6 @@ static bool lin_pid_valid(uint8_t pid) {
     return calc == pid;
 }
 
-// --- 辅助函数：校验和（支持 enhanced 或 classic） ---
-static uint8_t lin_checksum(uint8_t *data, int len, uint8_t pid, bool enhanced) {
-    uint16_t sum = 0;
-    if (enhanced) sum += pid;
-    for (int i = 0; i < len; i++) sum += data[i];
-    // 折叠高位
-    while (sum > 0xFF) sum = (sum & 0xFF) + (sum >> 8);
-    return (uint8_t)(~sum);
-}
 
 long lin_time_bytes_us(int bytes, int baud) {
     // 1 字节 = 1 start + 8 data + 1 stop = 10 bit
@@ -130,12 +165,6 @@ static int lin_pid_payload_len(uint8_t id6) {
 }
 
 
-// --- 打印帧内容（调试用） ---
-static void print_lin_frame(uint8_t pid, uint8_t *data, int len) {
-    printf("[LIN] ID=0x%02X LEN=%d DATA=", pid & 0x3F, len);
-    for (int i = 0; i < len; i++) printf(" %02X", data[i]);
-    printf("\n");
-}
 
 void on_uart_rx() {
 
@@ -208,7 +237,7 @@ void on_uart_rx() {
 
         if (lin_state == LIN_RECV_PID) {
             current_pid = data;
-            printf("[LIN] current_pid: 0x%02X\n", current_pid);
+            //printf("[LIN] current_pid: 0x%02X\n", current_pid);
             if (!lin_pid_valid(current_pid)) {
                 printf("[LIN] PID parity error: 0x%02X\n", current_pid);
                 lin_state = LIN_WAIT_BREAK;
@@ -237,7 +266,7 @@ void on_uart_rx() {
                 continue;
             }
             if (frame_pos >= frame_len) {
-                printf("[LIN] frame_pos %d data=0x%02X\n",frame_pos,data);
+                //printf("[LIN] frame_pos %d data=0x%02X\n",frame_pos,data);
                 lin_state = LIN_RECV_CHECKSUM;
             }
             continue;
@@ -248,10 +277,13 @@ void on_uart_rx() {
             // 先尝试 enhanced（PID + data），若失败再尝试 classic（data only）
             uint8_t calc_e = lin_checksum(frame_buf, frame_len, current_pid, true);
             uint8_t calc_c = lin_checksum(frame_buf, frame_len, current_pid, false);
-            printf("[LIN] lin_checksum 0x%02X  0x%02X 0x%02X\n",calc_e,calc_c,recv_checksum);
+            //printf("[LIN] lin_checksum 0x%02X  0x%02X 0x%02X\n",calc_e,calc_c,recv_checksum);
             if (recv_checksum == calc_e || recv_checksum == calc_c) {
                 // 成功
-                print_lin_frame(current_pid, frame_buf, frame_len);
+                if(recv_checksum != 0)
+                    print_lin_frame(current_pid, frame_buf, frame_len);
+                else
+                    print_lin_frame(current_pid, frame_buf, frame_len-1);
             } else {
                 printf("[LIN] checksum error ID=0x%02X calc_e=0x%02X calc_c=0x%02X recv=0x%02X\n",
                        current_pid & 0x3F, calc_e, calc_c, recv_checksum);
@@ -274,7 +306,7 @@ void lin_init(int baudrate) {
     gpio_set_function(LIN_UART_RX_PIN, GPIO_FUNC_UART);
     uart_set_fifo_enabled(LIN_UART_ID, false);
     lin_flash_timeout_us = calculate_byte_transmit_time_precise(baudrate,100, 1,false); // 8 字节时间
-    printf("[LIN] lin_flash_timeout_us %ld \n",lin_flash_timeout_us);
+    //printf("[LIN] lin_flash_timeout_us %ld \n",lin_flash_timeout_us);
     // 设置UART中断回调函数
     irq_set_exclusive_handler(LIN_UART_IRQ, on_uart_rx);
     irq_set_enabled(LIN_UART_IRQ, true);

@@ -21,6 +21,7 @@
 #include "lin/lin.h"
 #include "pico/multicore.h"
 #include "core1.h"
+#include "pico-mcp2515.h"
 
 #define RESET_PIN 21 // 板子烧录开关
 absolute_time_t  press_start ;
@@ -67,14 +68,7 @@ struct can_frame canMsg2;
 
 const char * SEPARATOR = ",";
 const char *  TERMINATOR = "\n";
-enum
-{
-	PKG_STATE_STRART,
-    PKG_STATE_ID,
-    PKG_STATE_RTR,
-    PKG_STATE_IDE,
-    PKG_STATE_DATA,
-};
+
 uint8_t state = PKG_STATE_STRART;
 
 
@@ -203,13 +197,6 @@ int hex_string_to_bytes_opt(const char *hex_str, uint8_t *bytes, size_t bytes_le
     return 0;
 }
 
-typedef struct {
-  long id;
-  uint8_t rtr;
-  uint8_t ide;
-  uint8_t dlc;
-  uint8_t dataArray[20];
-} packet_t;
 uint8_t hostDataArray[50];
 uint8_t hostDataHEX[2];
 uint8_t hostDataIndex = 0;
